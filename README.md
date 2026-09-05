@@ -25,11 +25,26 @@ The web client lives in a separate repository:
 2. **Limits** — the runtime is checked against the free plan before any work
    starts (see below).
 3. **Transcript** — YouTube's own captions are tried first, because they are
-   free and instant.
+   free and instant. The downloader service fetches them, and a track is kept
+   in its own language when YouTube offers no translation.
 4. **Audio fallback** — if there are no usable captions, the downloader service
    returns speech-grade mono mp3 (16 kHz, 64 kbps) and Groq Whisper transcribes
    it. The mp3 is roughly 20x smaller than the equivalent PCM wav, which is
    what makes this step take seconds rather than minutes.
+
+### Where the downloader has to run
+
+Every request that reaches YouTube goes through the downloader service, and
+YouTube refuses datacenter IP ranges: yt-dlp gets "Sign in to confirm you're
+not a bot", and auto-generated caption tracks are withheld. Videos whose
+creator uploaded real subtitles still work from anywhere.
+
+So the downloader needs a residential egress. Either run it on a residential
+connection and point `DOWNLOADER_URL` at it, or give it `PROXY_URL` for a
+**residential** proxy - a datacenter proxy is blocked exactly like a cloud host,
+so check any proxy with `curl -x <proxy> https://ipinfo.io/json` and reject it
+if the exit IP reports `hosting: true`. The backend itself never contacts
+YouTube, so it can stay on a cloud host.
 5. **Notes** — a long transcript is sliced so the notes cover the whole video
    rather than only the part that fit in one request, then the parts are merged.
 6. **Store** — notes are written to the database and to `notes/`.
