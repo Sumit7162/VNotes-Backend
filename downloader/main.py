@@ -3,10 +3,15 @@ import tempfile
 import uuid
 import logging
 
+from urllib.parse import urlparse, parse_qs
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import TextFormatter
+from youtube_transcript_api.proxies import GenericProxyConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -159,6 +164,86 @@ def video_info(request: DownloadRequest):
         "thumbnail": info.get("thumbnail"),
         "uploader": info.get("uploader"),
     }
+
+
+def extract_video_id(url: str) -> str:
+    """Pull the 11-character video id out of any common YouTube URL form."""
+    url = url.strip()
+    parsed = urlparse(url)
+    if parsed.hostname in ("youtu.be", "www.youtu.be"):
+        return parsed.path.lstrip("/").split("/")[0]
+    if parsed.hostname in ("youtube.com", "www.youtube.com", "m.youtube.com"):
+        if parsed.path == "/watch":
+            ids = parse_qs(parsed.query).get("v")
+            if ids:
+                return ids[0]
+        for prefix in ("/embed/", "/v/", "/shorts/", "/live/"):
+            if parsed.path.startswith(prefix):
+                return parsed.path[len(prefix):].split("/")[0]
+    raise ValueError(f"Could not extract a YouTube video id from {url!r}")
+
+
+def pick_transcript(transcript_list):
+    """Choose the most useful caption track: English first, else whatever exists."""
+    for find in (
+        transcript_list.find_manually_created_transcript,
+        transcript_list.find_generated_transcript,
+    ):
+        try:
+            return find(["en"])
+        except Exception:
+            continue
+    return list(transcript_list)[0]
+
+
+@app.post("/transcript")
+def fetch_transcript(request: DownloadRequest):
+    """Fetch YouTube captions.
+
+    This lives in the downloader rather than the backend because the downloader
+    is the component deployed where YouTube will talk to it. YouTube serves
+    auto-generated caption tracks only to non-datacenter IPs, so a backend
+    running on a cloud host cannot fetch them itself.
+    """
+    try:
+        video_id = extract_video_id(request.url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    proxy_config = (
+        GenericProxyConfig(http_url=PROXY_URL, https_url=PROXY_URL)
+        if PROXY_URL
+        else None
+    )
+
+    try:
+        transcript_list = YouTubeTranscriptApi(proxy_config=proxy_config).list(video_id)
+        chosen = pick_transcript(transcript_list)
+        language, generated = chosen.language_code, chosen.is_generated
+
+        # Translate to English only when YouTube actually offers a translation.
+        # Auto-generated tracks frequently report is_translatable=False, and
+        # calling translate() on one raises - which used to send the whole video
+        # down the download-and-transcribe path even though usable captions
+        # existed. Keeping the original language is far cheaper, and the note
+        # generator handles a non-English transcript.
+        if language != "en" and chosen.is_translatable:
+            chosen = chosen.translate("en")
+            language = "en"
+
+        text = TextFormatter().format_transcript(chosen.fetch())
+    except Exception as e:
+        logger.warning(f"Transcript fetch failed for {request.url}: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not text.strip():
+        raise HTTPException(status_code=502, detail="Captions were empty")
+
+    logger.info(
+        "Transcript for %s: %s chars, language=%s, generated=%s",
+        video_id, len(text), language, generated,
+    )
+    return {"transcript": text, "language": language, "is_generated": generated}
 
 
 @app.post("/download")

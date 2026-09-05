@@ -6,3 +6,7 @@ uvicorn
 # code works on a dev machine that happens to have node on PATH.
 yt-dlp[default,deno]
 pydantic
+# The downloader also fetches captions: YouTube serves auto-generated caption
+# tracks only to non-datacenter IPs, so this has to run wherever the downloader
+# runs, not in a cloud-hosted backend.
+youtube-transcript-api

@@ -176,7 +176,53 @@ class YouTubeDownloaderService:
             return None
 
     def get_transcript(self, url: str) -> str:
-        """Fetch YouTube auto-generated captions directly."""
+        """Fetch YouTube captions, preferring the downloader service.
+
+        YouTube serves auto-generated caption tracks only to non-datacenter IPs,
+        so a cloud-hosted backend cannot reliably fetch them itself. The
+        downloader is the component meant to face YouTube, so ask it first and
+        only fall back to fetching directly when it cannot answer.
+        """
+        via_service = self._transcript_via_downloader_service(url)
+        if via_service is not None:
+            return via_service
+        return self._transcript_direct(url)
+
+    def _transcript_via_downloader_service(self, url: str) -> Optional[str]:
+        """Captions from the downloader service, or None if it could not supply them."""
+        from app.core.config import get_settings
+
+        downloader_url = get_settings().downloader_url.rstrip("/")
+        try:
+            response = httpx.post(
+                f"{downloader_url}/transcript", json={"url": url}, timeout=60.0
+            )
+            if response.status_code >= 400:
+                logger.info(
+                    "transcript_service_no_captions",
+                    url=url,
+                    status=response.status_code,
+                    detail=response.text[:300],
+                )
+                return None
+            data = response.json()
+            transcript = (data.get("transcript") or "").strip()
+            if not transcript:
+                return None
+            logger.info(
+                "transcript_fetched_via_service",
+                url=url,
+                language=data.get("language"),
+                generated=data.get("is_generated"),
+                chars=len(transcript),
+            )
+            return transcript
+        except Exception as e:
+            logger.warning("transcript_service_unreachable", url=url, error=str(e))
+            return None
+
+    def _transcript_direct(self, url: str) -> str:
+        """Fetch captions from this process. Blocked on datacenter IPs."""
         video_id = extract_video_id(url)
         try:
             # Check if a cookies.txt file exists to bypass YouTube's bot detection
@@ -206,20 +252,33 @@ class YouTubeDownloaderService:
                 proxy_config=proxy_config, http_client=http_client
             )
             transcript_list = fetcher.list(video_id)
-            
-            # Fetch the first available transcript (regardless of language)
-            first_transcript = list(transcript_list)[0]
-            
-            # If it's not English, translate it to English
-            if first_transcript.language_code != 'en':
-                first_transcript = first_transcript.translate('en')
-                
-            raw_transcript = first_transcript.fetch()
-            
-            formatter = TextFormatter()
-            transcript = formatter.format_transcript(raw_transcript)
-            
-            logger.info("transcript_fetched", video_id=video_id)
+
+            # Prefer an English track, else take whatever the video has.
+            chosen = None
+            for find in (
+                transcript_list.find_manually_created_transcript,
+                transcript_list.find_generated_transcript,
+            ):
+                try:
+                    chosen = find(["en"])
+                    break
+                except Exception:
+                    continue
+            if chosen is None:
+                chosen = list(transcript_list)[0]
+
+            language = chosen.language_code
+            # Translate only when YouTube offers a translation. Auto-generated
+            # tracks often report is_translatable=False, and calling translate()
+            # on one raises - which used to discard usable captions and send the
+            # video down the far more expensive download-and-transcribe path.
+            if language != "en" and chosen.is_translatable:
+                chosen = chosen.translate("en")
+                language = "en"
+
+            transcript = TextFormatter().format_transcript(chosen.fetch())
+
+            logger.info("transcript_fetched", video_id=video_id, language=language)
             return transcript
         except Exception as e:
             logger.error("transcript_fetch_failed", url=url, error=str(e))
