@@ -1,0 +1,14 @@
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+uploads/
+transcripts/
+notes/
+*.db
+tests/
+downloader/
+docker-compose.yml

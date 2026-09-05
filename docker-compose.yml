@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: videonotes
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/videonotes
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-super_secret_key_change_me_in_production}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      UPLOAD_DIR: /app/uploads
+      TRANSCRIPT_DIR: /app/transcripts
+      NOTES_DIR: /app/notes
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173"]}
+      DOWNLOADER_URL: "http://downloader:8001"
+    volumes:
+      - uploads_data:/app/uploads
+      - transcripts_data:/app/transcripts
+      - notes_data:/app/notes
+    depends_on:
+      db:
+        condition: service_healthy
+      downloader:
+        condition: service_started
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  downloader:
+    build:
+      context: ./downloader
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+
+volumes:
+  postgres_data:
+  uploads_data:
+  transcripts_data:
+  notes_data:

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets
+.env
+.env.local
+cookies.txt
+*_cookies.txt
+
+# Local storage produced at runtime
+uploads/
+transcripts/
+notes/
+*.db
+*.sqlite3
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
