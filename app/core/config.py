@@ -19,6 +19,15 @@ class Settings(BaseSettings):
 
     # Google Authentication
     google_client_id: str = ""
+
+    # YouTube Data API v3 key.
+    #
+    # The preferred source of a video's runtime and title: it is Google's own
+    # API, so unlike the scraped endpoints it answers a cloud host normally, and
+    # a lookup costs one unit of a 10,000/day free quota. Without it the runtime
+    # falls back to the downloader's yt-dlp probe, which YouTube blocks from
+    # datacenter IPs.
+    youtube_api_key: str = ""
     
     # Custom JWT Authentication
     jwt_secret_key: str = "super_secret_key_change_me_in_production"

@@ -20,8 +20,10 @@ The web client lives in a separate repository:
 
 ## How a video is processed
 
-1. **Metadata** — the runtime comes from the downloader's yt-dlp probe, the
-   title from YouTube's oEmbed API.
+1. **Metadata** — the runtime and title come from the YouTube Data API when
+   `YOUTUBE_API_KEY` is set, falling back to the downloader's yt-dlp probe and
+   then to oEmbed. The Data API is preferred because it is Google's own API and
+   so answers a cloud host normally, where the probe is IP-blocked.
 2. **Limits** — the runtime is checked against the free plan before any work
    starts (see below).
 3. **Transcript** — YouTube's own captions are tried first, because they are

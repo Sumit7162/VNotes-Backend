@@ -1,4 +1,5 @@
 import httpx
+import re
 import time
 from pathlib import Path
 from typing import NamedTuple, Optional
@@ -97,6 +98,34 @@ def extract_video_id(url: str) -> str:
     raise ValueError("Invalid YouTube URL")
 
 
+# The Data API reports runtimes as ISO 8601 durations ("PT15M39S"). Live streams
+# and premieres can come back as a bare "P0D", so the time part is optional.
+_ISO8601_DURATION = re.compile(
+    r"^P(?:(?P<days>\d+)D)?"
+    r"(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+)
+
+
+def parse_iso8601_duration(value: Optional[str]) -> Optional[int]:
+    """Seconds from an ISO 8601 duration, or None if it is absent or malformed.
+
+    Returns None rather than 0 for a zero-length duration: a live stream reports
+    "P0D", and treating that as a genuinely zero-second video would let it slip
+    past the free plan's duration cap.
+    """
+    match = _ISO8601_DURATION.match(value or "")
+    if not match:
+        return None
+    parts = {key: int(raw or 0) for key, raw in match.groupdict().items()}
+    seconds = (
+        parts["days"] * 86400
+        + parts["hours"] * 3600
+        + parts["minutes"] * 60
+        + parts["seconds"]
+    )
+    return seconds or None
+
+
 def normalize_youtube_url(url: str) -> str:
     """Return a clean watch URL without sharing/tracking query params."""
     video_id = extract_video_id(url)
@@ -105,35 +134,111 @@ def normalize_youtube_url(url: str) -> str:
 
 class YouTubeDownloaderService:
     def get_video_info(self, url: str) -> dict:
-        """Fetch video metadata: runtime from the downloader service, title from oEmbed.
+        """Fetch video metadata, cheapest and most reliable source first.
 
         The runtime matters - it is what the free-plan duration cap and the
-        usage counters are measured in - and YouTube's oEmbed API does not
-        report it, so the downloader service is asked to probe the video with
-        yt-dlp. oEmbed still fills in the title because it answers in
-        milliseconds and does not trip YouTube's bot checks. ``duration`` stays
-        None when neither source can say, and the UI hides an unknown duration
-        rather than showing a made-up one.
+        usage counters are measured in - so it is worth some care to obtain.
+
+        1. The YouTube Data API, when a key is configured. It is Google's own
+           API, so it answers a cloud host as happily as anywhere else, it
+           reports the runtime directly, and one lookup costs a single unit of
+           a 10,000/day free quota.
+        2. The downloader's yt-dlp probe. Accurate, but it is subject to the
+           datacenter-IP blocking that the Data API sidesteps.
+        3. oEmbed, for the title only - it does not report a runtime.
+
+        ``duration`` stays None when no source can say, and the UI hides an
+        unknown duration rather than showing a made-up one.
         """
         info = {"title": None, "duration": None, "thumbnail": None}
 
-        probed = self._probe_via_downloader_service(url)
-        if probed:
-            info.update(
-                {
-                    "title": probed.get("title") or info["title"],
-                    "duration": probed.get("duration"),
-                    "thumbnail": probed.get("thumbnail") or info["thumbnail"],
-                }
-            )
+        from_api = self._fetch_via_data_api(url)
+        if from_api:
+            info.update(from_api)
 
-        oembed = self._fetch_oembed(url)
-        if oembed:
-            info["title"] = oembed.get("title") or info["title"]
-            info["thumbnail"] = info["thumbnail"] or oembed.get("thumbnail")
+        # Only probe when the Data API could not answer: the probe is the slow
+        # path and the one YouTube blocks.
+        if info["duration"] is None or info["title"] is None:
+            probed = self._probe_via_downloader_service(url)
+            if probed:
+                info["title"] = info["title"] or probed.get("title")
+                info["duration"] = info["duration"] or probed.get("duration")
+                info["thumbnail"] = info["thumbnail"] or probed.get("thumbnail")
+
+        if not info["title"] or not info["thumbnail"]:
+            oembed = self._fetch_oembed(url)
+            if oembed:
+                info["title"] = info["title"] or oembed.get("title")
+                info["thumbnail"] = info["thumbnail"] or oembed.get("thumbnail")
 
         info["title"] = info["title"] or "YouTube Video"
         return info
+
+    @staticmethod
+    def _fetch_via_data_api(url: str) -> Optional[dict]:
+        """Metadata from the YouTube Data API, or None when it cannot answer.
+
+        Not routed through the proxy: this is Google's own API rather than the
+        scraped endpoints, so it is not IP-blocked, and sending it through a
+        metered residential proxy would only waste bandwidth.
+        """
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        if not settings.youtube_api_key:
+            return None
+
+        try:
+            video_id = extract_video_id(url)
+        except ValueError as e:
+            logger.warning("data_api_bad_url", url=url, error=str(e))
+            return None
+
+        try:
+            response = httpx.get(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params={
+                    "part": "snippet,contentDetails",
+                    "id": video_id,
+                    "key": settings.youtube_api_key,
+                },
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "data_api_rejected",
+                    video_id=video_id,
+                    status=response.status_code,
+                    detail=response.text[:300],
+                )
+                return None
+
+            items = response.json().get("items") or []
+            if not items:
+                # A private, deleted, or region-blocked video returns no items.
+                logger.info("data_api_no_such_video", video_id=video_id)
+                return None
+
+            snippet = items[0].get("snippet") or {}
+            details = items[0].get("contentDetails") or {}
+            thumbnails = snippet.get("thumbnails") or {}
+            best = (
+                thumbnails.get("maxres")
+                or thumbnails.get("standard")
+                or thumbnails.get("high")
+                or {}
+            )
+
+            duration = parse_iso8601_duration(details.get("duration"))
+            logger.info("data_api_metadata", video_id=video_id, duration=duration)
+            return {
+                "title": snippet.get("title"),
+                "duration": duration,
+                "thumbnail": best.get("url"),
+            }
+        except Exception as e:
+            logger.warning("data_api_failed", video_id=video_id, error=str(e))
+            return None
 
     def _probe_via_downloader_service(self, url: str) -> Optional[dict]:
         """Ask the downloader service for yt-dlp metadata; None if it cannot say."""
