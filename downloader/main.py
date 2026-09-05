@@ -25,6 +25,13 @@ AUDIO_BITRATE_KBPS = "64"
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_MEDIA_TYPE = "audio/mpeg"
 
+# YouTube's player gates audio formats behind a JavaScript challenge, so yt-dlp
+# needs a JS runtime to see them at all. Deno is the one that travels with the
+# image (installed by the yt-dlp[deno] extra); node is listed too so a developer
+# machine that already has it keeps working. yt-dlp picks the highest-priority
+# runtime that is actually present, so enabling one that is missing is harmless.
+JS_RUNTIMES = {"deno": {}, "node": {}}
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -110,7 +117,7 @@ def pick_audio_format_id(formats: list[dict]) -> str | None:
 def probe_video(url: str) -> dict:
     """Pull metadata for a video without downloading it."""
     opts = {
-        "js_runtimes": {"node": {}},
+        "js_runtimes": JS_RUNTIMES,
         "quiet": True,
         "skip_download": True,
         "legacyserverconnect": True,
@@ -155,7 +162,7 @@ def download_audio(request: DownloadRequest, background_tasks: BackgroundTasks):
         "outtmpl": output_filename,
         # YouTube's current player uses JS challenges for audio formats.
         # yt-dlp-ejs is installed with the downloader environment.
-        "js_runtimes": {"node": {}},
+        "js_runtimes": JS_RUNTIMES,
         # Speech-grade mono mp3 rather than PCM wav: the caller only feeds this
         # to a transcription API, and a wav of a 15-minute video is ~150MB to
         # push over the wire where the mp3 is ~7MB.

@@ -1,4 +1,8 @@
 fastapi
 uvicorn
-yt-dlp[default]
+# [deno] ships a pip-installable Deno binary. yt-dlp needs a JavaScript runtime
+# to solve YouTube's player challenges, and the slim image has no node, so
+# without this the container extracts no audio formats even though the same
+# code works on a dev machine that happens to have node on PATH.
+yt-dlp[default,deno]
 pydantic
