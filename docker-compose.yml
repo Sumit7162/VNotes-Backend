@@ -35,6 +35,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173"]}
       DOWNLOADER_URL: "http://downloader:8001"
+      PROXY_URL: ${PROXY_URL:-}
+      WEBSHARE_PROXY_USERNAME: ${WEBSHARE_PROXY_USERNAME:-}
+      WEBSHARE_PROXY_PASSWORD: ${WEBSHARE_PROXY_PASSWORD:-}
     volumes:
       - uploads_data:/app/uploads
       - transcripts_data:/app/transcripts
@@ -52,6 +55,9 @@ services:
       context: ./downloader
       dockerfile: Dockerfile
     restart: unless-stopped
+    environment:
+      # YouTube blocks datacenter IPs; a deployed downloader needs this set.
+      PROXY_URL: ${PROXY_URL:-}
     ports:
       - "8001:8001"
 

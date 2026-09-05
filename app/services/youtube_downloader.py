@@ -25,6 +25,54 @@ class DownloadedAudio(NamedTuple):
     duration_seconds: Optional[int] = None
 
 
+def build_proxy_config():
+    """Proxy configuration for youtube-transcript-api, or None if unconfigured.
+
+    Webshare credentials win over a plain proxy URL because the library's
+    Webshare integration rotates exit nodes and retries when YouTube blocks one,
+    which a static proxy URL cannot do.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+
+    if settings.webshare_proxy_username and settings.webshare_proxy_password:
+        from youtube_transcript_api.proxies import WebshareProxyConfig
+
+        return WebshareProxyConfig(
+            proxy_username=settings.webshare_proxy_username,
+            proxy_password=settings.webshare_proxy_password,
+        )
+
+    if settings.proxy_url:
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        return GenericProxyConfig(
+            http_url=settings.proxy_url,
+            https_url=settings.proxy_url,
+        )
+
+    return None
+
+
+def outbound_proxy() -> Optional[str]:
+    """Proxy URL for direct httpx calls to YouTube, or None.
+
+    Webshare's rotating endpoint works as an ordinary authenticated HTTP proxy,
+    so it serves the plain httpx calls too.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+
+    if settings.webshare_proxy_username and settings.webshare_proxy_password:
+        return (
+            f"http://{settings.webshare_proxy_username}:"
+            f"{settings.webshare_proxy_password}@p.webshare.io:80"
+        )
+    return settings.proxy_url or None
+
+
 def extract_video_id(url: str) -> str:
     """Extract YouTube video ID from URL."""
     url = url.strip()
@@ -114,7 +162,8 @@ class YouTubeDownloaderService:
         """Title and thumbnail from YouTube's oEmbed API; None if unavailable."""
         try:
             oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
-            response = httpx.get(oembed_url, timeout=10.0)
+            # oEmbed is a YouTube endpoint, so it goes out through the proxy too.
+            response = httpx.get(oembed_url, timeout=10.0, proxy=outbound_proxy())
             if response.status_code != 200:
                 return None
             data = response.json()
@@ -148,8 +197,14 @@ class YouTubeDownloaderService:
                     logger.warning("failed_to_load_cookies", error=str(e))
                     http_client = None
 
-            # New version (e.g. 1.2.4) uses http_client parameter for cookies
-            fetcher = YouTubeTranscriptApi(http_client=http_client) if http_client else YouTubeTranscriptApi()
+            # proxy_config and http_client compose: the proxies are applied onto
+            # the session passed in, so cookies and a proxy can be used together.
+            proxy_config = build_proxy_config()
+            if proxy_config is None:
+                logger.warning("transcript_fetch_without_proxy", video_id=video_id)
+            fetcher = YouTubeTranscriptApi(
+                proxy_config=proxy_config, http_client=http_client
+            )
             transcript_list = fetcher.list(video_id)
             
             # Fetch the first available transcript (regardless of language)

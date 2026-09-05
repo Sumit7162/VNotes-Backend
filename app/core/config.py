@@ -66,8 +66,19 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # Proxy (needed on HF Spaces to bypass YouTube IP blocks)
+    # Proxy for the requests that touch YouTube.
+    #
+    # YouTube answers datacenter IP ranges (GCP, AWS, ...) with "Sign in to
+    # confirm you're not a bot", so any deployed instance has to egress through
+    # a residential proxy. Set either a full proxy URL, or Webshare credentials
+    # - youtube-transcript-api has a dedicated Webshare integration that rotates
+    # exit nodes and retries when one of them is blocked.
+    #
+    # This only applies to outbound YouTube traffic. Calls to the downloader
+    # service are internal and are never proxied.
     proxy_url: str = ""
+    webshare_proxy_username: str = ""
+    webshare_proxy_password: str = ""
 
     # RapidAPI
     rapidapi_key: str = ""

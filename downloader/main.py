@@ -25,6 +25,12 @@ AUDIO_BITRATE_KBPS = "64"
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_MEDIA_TYPE = "audio/mpeg"
 
+# YouTube answers datacenter IP ranges with "Sign in to confirm you're not a
+# bot", so a deployed downloader has to egress through a residential proxy.
+# Accepts any scheme yt-dlp understands, including socks5://. Empty = direct,
+# which is fine on a developer machine but will be blocked on a cloud host.
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
+
 # YouTube's player gates audio formats behind a JavaScript challenge, so yt-dlp
 # needs a JS runtime to see them at all. Deno is the one that travels with the
 # image (installed by the yt-dlp[deno] extra); node is listed too so a developer
@@ -65,6 +71,8 @@ def health_check():
         "status": "healthy",
         "service": "youtube-downloader",
         "cookies_loaded": bool(get_cookies_file()),
+        # Whether an egress proxy is configured, without leaking its credentials.
+        "proxy_configured": bool(PROXY_URL),
     }
 
 
@@ -128,6 +136,8 @@ def probe_video(url: str) -> dict:
     cookies_file = get_cookies_file()
     if cookies_file:
         opts["cookiefile"] = cookies_file
+    if PROXY_URL:
+        opts["proxy"] = PROXY_URL
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False) or {}
@@ -187,6 +197,13 @@ def download_audio(request: DownloadRequest, background_tasks: BackgroundTasks):
     }
     if cookies_file:
         base_opts["cookiefile"] = cookies_file
+    if PROXY_URL:
+        base_opts["proxy"] = PROXY_URL
+    else:
+        logger.warning(
+            "No PROXY_URL set; YouTube blocks datacenter IPs and this will "
+            "likely fail with 'Sign in to confirm you're not a bot'"
+        )
 
     selected_format = None
     duration = None
