@@ -57,6 +57,7 @@ class VideoRepository:
         clear_error: bool = False,
         file_path: Optional[str] = None,
         audio_path: Optional[str] = None,
+        clear_media_paths: bool = False,
     ) -> Video:
         video.status = status
         if title is not None:
@@ -69,6 +70,11 @@ class VideoRepository:
             video.error_message = None
         if error_message is not None:
             video.error_message = error_message
+        # Same convention as error_message: None means "leave it alone", so
+        # dropping a path once its file is gone needs its own flag.
+        if clear_media_paths:
+            video.file_path = None
+            video.audio_path = None
         if file_path is not None:
             video.file_path = file_path
         if audio_path is not None:

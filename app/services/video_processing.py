@@ -104,10 +104,41 @@ class VideoProcessingService:
                 minutes=duration_minutes,
             )
 
-            # Step 4: Mark complete
+            # Step 4: Discard any media, then mark complete
+            self._discard_media(video)
             self.video_repo.update_status(video, VideoStatus.COMPLETED, clear_error=True)
             logger.info("processing_complete", video_id=str(video_id))
 
         except Exception as e:
             logger.error("processing_failed", video_id=str(video_id), error=str(e))
+            # A failed run must not leave media behind either.
+            self._discard_media(video)
             self.video_repo.update_status(video, VideoStatus.FAILED, error_message=str(e))
+
+    def _discard_media(self, video) -> None:
+        """Delete any video/audio file this record points at, and forget the paths.
+
+        The current pipeline never downloads media, so for anything processed
+        since the move to the transcript API this is a no-op. It exists for
+        records created by the old download-and-transcribe pipeline, whose rows
+        still carry file_path and audio_path: reprocessing one now clears the
+        files it left on disk instead of stranding them there.
+
+        Cleanup failure is logged and swallowed - the notes are already saved,
+        and a leftover file is not worth failing a finished video over.
+        """
+        paths = [path for path in (video.file_path, video.audio_path) if path]
+        if not paths:
+            return
+
+        for path in paths:
+            try:
+                file = Path(path)
+                if file.exists():
+                    size_mb = round(file.stat().st_size / (1024 * 1024), 1)
+                    file.unlink()
+                    logger.info("media_discarded", path=path, size_mb=size_mb)
+            except OSError as e:
+                logger.warning("media_discard_failed", path=path, error=str(e))
+
+        self.video_repo.update_status(video, video.status, clear_media_paths=True)
