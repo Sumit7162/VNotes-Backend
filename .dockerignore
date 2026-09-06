@@ -10,5 +10,4 @@ transcripts/
 notes/
 *.db
 tests/
-downloader/
 docker-compose.yml

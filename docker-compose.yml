@@ -30,40 +30,24 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-super_secret_key_change_me_in_production}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      UPLOAD_DIR: /app/uploads
+      TRANSCRIPT_API_KEY: ${TRANSCRIPT_API_KEY:-}
+      TRANSCRIPT_LANGUAGE: ${TRANSCRIPT_LANGUAGE:-auto}
+      TRANSCRIPT_TRANSLATE_TO: ${TRANSCRIPT_TRANSLATE_TO:-none}
+      TRANSCRIPT_NATIVE_ONLY: ${TRANSCRIPT_NATIVE_ONLY:-false}
       TRANSCRIPT_DIR: /app/transcripts
       NOTES_DIR: /app/notes
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173"]}
-      DOWNLOADER_URL: "http://downloader:8001"
-      PROXY_URL: ${PROXY_URL:-}
-      WEBSHARE_PROXY_USERNAME: ${WEBSHARE_PROXY_USERNAME:-}
-      WEBSHARE_PROXY_PASSWORD: ${WEBSHARE_PROXY_PASSWORD:-}
     volumes:
-      - uploads_data:/app/uploads
       - transcripts_data:/app/transcripts
       - notes_data:/app/notes
     depends_on:
       db:
         condition: service_healthy
-      downloader:
-        condition: service_started
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
-  downloader:
-    build:
-      context: ./downloader
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      # YouTube blocks datacenter IPs; a deployed downloader needs this set.
-      PROXY_URL: ${PROXY_URL:-}
-    ports:
-      - "8001:8001"
-
 volumes:
   postgres_data:
-  uploads_data:
   transcripts_data:
   notes_data:

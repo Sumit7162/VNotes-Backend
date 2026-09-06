@@ -14,42 +14,34 @@ The web client lives in a separate repository:
 | Database | PostgreSQL 16, SQLAlchemy 2, Alembic |
 | Validation | Pydantic v2 + pydantic-settings |
 | Auth | Google Sign-In verified server-side, then app-issued JWTs |
-| Transcript | YouTube captions, falling back to Groq Whisper on downloaded audio |
+| Transcript | [YouTubeTranscripts.co](https://youtubetranscripts.co) REST API |
 | Notes | Groq (default) or NVIDIA NIM |
-| Audio | `downloader/` microservice (yt-dlp + ffmpeg) |
 
 ## How a video is processed
 
 1. **Metadata** — the runtime and title come from the YouTube Data API when
-   `YOUTUBE_API_KEY` is set, falling back to the downloader's yt-dlp probe and
-   then to oEmbed. The Data API is preferred because it is Google's own API and
-   so answers a cloud host normally, where the probe is IP-blocked.
+   `YOUTUBE_API_KEY` is set, falling back to oEmbed for the title. The Data API
+   is preferred because it reports the runtime, which oEmbed does not.
 2. **Limits** — the runtime is checked against the free plan before any work
-   starts (see below).
-3. **Transcript** — YouTube's own captions are tried first, because they are
-   free and instant. The downloader service fetches them, and a track is kept
-   in its own language when YouTube offers no translation.
-4. **Audio fallback** — if there are no usable captions, the downloader service
-   returns speech-grade mono mp3 (16 kHz, 64 kbps) and Groq Whisper transcribes
-   it. The mp3 is roughly 20x smaller than the equivalent PCM wav, which is
-   what makes this step take seconds rather than minutes.
-
-### Where the downloader has to run
-
-Every request that reaches YouTube goes through the downloader service, and
-YouTube refuses datacenter IP ranges: yt-dlp gets "Sign in to confirm you're
-not a bot", and auto-generated caption tracks are withheld. Videos whose
-creator uploaded real subtitles still work from anywhere.
-
-So the downloader needs a residential egress. Either run it on a residential
-connection and point `DOWNLOADER_URL` at it, or give it `PROXY_URL` for a
-**residential** proxy - a datacenter proxy is blocked exactly like a cloud host,
-so check any proxy with `curl -x <proxy> https://ipinfo.io/json` and reject it
-if the exit IP reports `hosting: true`. The backend itself never contacts
-YouTube, so it can stay on a cloud host.
-5. **Notes** — a long transcript is sliced so the notes cover the whole video
+   starts (see below). A video whose runtime no source could report is accepted,
+   and the runtime the transcript API reports is recorded instead.
+3. **Transcript** — one call to the YouTubeTranscripts.co API. It serves the
+   video's native captions where they exist and runs its own Whisper
+   transcription where they do not, so nothing here downloads media: no yt-dlp,
+   no ffmpeg, and no residential proxy to get past YouTube's datacenter-IP
+   block. The API is asynchronous, so the request is enqueued and then polled
+   until it completes.
+4. **Notes** — a long transcript is sliced so the notes cover the whole video
    rather than only the part that fit in one request, then the parts are merged.
-6. **Store** — notes are written to the database and to `notes/`.
+5. **Store** — notes are written to the database and to `notes/`.
+
+### Transcript API credits
+
+Native captions cost 1 credit per video, the Whisper fallback 1 credit per
+minute (rounded up), and a repeat of a video already fetched is free. Set
+`TRANSCRIPT_NATIVE_ONLY=true` to skip the Whisper fallback entirely, which caps
+the spend at one credit per video at the cost of failing on videos that have no
+captions.
 
 ### Free plan limits
 
@@ -61,29 +53,21 @@ YouTube, so it can stay on a cloud host.
 
 ## Running locally
 
-Requires Python 3.12+, PostgreSQL 16, and ffmpeg on `PATH`.
+Requires Python 3.12+ and PostgreSQL 16.
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate        # Windows; use: source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env          # then fill in DATABASE_URL, GOOGLE_CLIENT_ID, GROQ_API_KEY
+cp .env.example .env          # then fill in DATABASE_URL, GOOGLE_CLIENT_ID,
+                              # GROQ_API_KEY and TRANSCRIPT_API_KEY
 alembic upgrade head
 
 uvicorn app.main:app --reload --port 8000
 ```
 
 The API serves on <http://localhost:8000>, with interactive docs at `/docs`.
-
-The downloader is a separate process, and is only needed for videos without
-usable captions:
-
-```bash
-cd downloader
-pip install -r requirements.txt
-uvicorn main:app --port 8001
-```
 
 ### With Docker
 
@@ -92,7 +76,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-That brings up PostgreSQL, the API on 8000, and the downloader on 8001.
+That brings up PostgreSQL and the API on 8000.
 
 ## Endpoints
 
@@ -119,10 +103,9 @@ app/
 ├── models/        # SQLAlchemy ORM models
 ├── repositories/  # Data access
 ├── schemas/       # Pydantic request/response models
-├── services/      # Pipeline: download, transcribe, generate notes, limits
+├── services/      # Pipeline: metadata, transcript, note generation, limits
 └── utils/         # Structured logging
 alembic/           # Migrations
-downloader/        # yt-dlp audio microservice (own Dockerfile)
 tests/
 ```
 
@@ -130,7 +113,9 @@ tests/
 
 Every setting in `app/core/config.py` can be supplied by environment variable or
 `.env`; see `.env.example` for the full list. The ones without sensible
-defaults are `DATABASE_URL`, `GOOGLE_CLIENT_ID`, and `GROQ_API_KEY`.
+defaults are `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GROQ_API_KEY`, and
+`TRANSCRIPT_API_KEY` (create one at
+<https://youtubetranscripts.co/dashboard/api-keys>).
 
 ## Tests
 

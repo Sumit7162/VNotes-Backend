@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     # Ensure storage directories exist
-    for d in [settings.upload_dir, settings.transcript_dir, settings.notes_dir]:
+    for d in [settings.transcript_dir, settings.notes_dir]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     # Auto-create database tables as fallback if alembic migrations not applied

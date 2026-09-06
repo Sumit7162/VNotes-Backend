@@ -2,13 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Install Python dependencies.
+# No system packages are needed: transcripts come from the YouTubeTranscripts.co
+# API, so there is no audio to download or re-encode and therefore no ffmpeg.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -17,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create storage directories
-RUN mkdir -p uploads transcripts notes
+RUN mkdir -p transcripts notes
 
 # Expose local default port. Cloud Run sets PORT=8080 at runtime.
 EXPOSE 8000

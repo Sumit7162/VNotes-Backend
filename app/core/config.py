@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     #
     # The preferred source of a video's runtime and title: it is Google's own
     # API, so unlike the scraped endpoints it answers a cloud host normally, and
-    # a lookup costs one unit of a 10,000/day free quota. Without it the runtime
-    # falls back to the downloader's yt-dlp probe, which YouTube blocks from
-    # datacenter IPs.
+    # a lookup costs one unit of a 10,000/day free quota. Without it a video's
+    # runtime is unknown until the transcript API reports it, which means the
+    # free plan's duration cap cannot be enforced before the video is accepted.
     youtube_api_key: str = ""
     
     # Custom JWT Authentication
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 1440 # 24 hours
 
-    # Groq API (used for transcription)
+    # Groq API (note generation)
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
 
@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     nvidia_model: str = "meta/llama-3.1-70b-instruct"
 
     # Storage paths
-    upload_dir: str = "./uploads"
     transcript_dir: str = "./transcripts"
     notes_dir: str = "./notes"
 
@@ -75,32 +74,29 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # Proxy for the requests that touch YouTube.
+    # YouTube Transcripts API - https://youtubetranscripts.co
     #
-    # YouTube answers datacenter IP ranges (GCP, AWS, ...) with "Sign in to
-    # confirm you're not a bot", so any deployed instance has to egress through
-    # a residential proxy. Set either a full proxy URL, or Webshare credentials
-    # - youtube-transcript-api has a dedicated Webshare integration that rotates
-    # exit nodes and retries when one of them is blocked.
-    #
-    # This only applies to outbound YouTube traffic. Calls to the downloader
-    # service are internal and are never proxied.
-    proxy_url: str = ""
-    webshare_proxy_username: str = ""
-    webshare_proxy_password: str = ""
-
-    # RapidAPI
-    rapidapi_key: str = ""
-    # Video Download API
-    video_download_api_key: str = ""
-    video_download_api_base_url: str = "https://p.savenow.to"
-    video_download_format: str = "mp3"
-    video_download_poll_interval_seconds: int = 3
-    video_download_poll_timeout_seconds: int = 300
-    # Downloader Service
-    # Defaults to the local service; docker-compose overrides this with the
-    # "downloader" service hostname.
-    downloader_url: str = "http://localhost:8001"
+    # The one and only source of transcripts. It serves a video's native
+    # captions where they exist and falls back to Whisper where they do not, so
+    # this backend never downloads audio and never has to get past YouTube's
+    # "Sign in to confirm you're not a bot" block on datacenter IPs. Create a
+    # key at https://youtubetranscripts.co/dashboard/api-keys.
+    transcript_api_key: str = ""
+    transcript_api_base_url: str = "https://api.youtubetranscripts.co"
+    # Caption language to request: an ISO-639 code ("en", "hi") or "auto" to
+    # take whatever track the video ships with.
+    transcript_language: str = "auto"
+    # Language to translate the transcript into, or "none" to keep it as-is.
+    transcript_translate_to: str = "none"
+    # Skip the API's Whisper fallback. Native captions cost 1 credit per video
+    # while the Whisper fallback costs 1 credit per minute, so turning this on
+    # caps the spend - at the price of failing on videos that have no captions.
+    transcript_native_only: bool = False
+    # The API is asynchronous, so a request is enqueued and then polled. The
+    # timeout has to cover a Whisper fallback on a long video, not just a
+    # caption lookup.
+    transcript_poll_interval_seconds: float = 2.0
+    transcript_poll_timeout_seconds: int = 600
 
     @property
     def cors_origins(self) -> List[str]:

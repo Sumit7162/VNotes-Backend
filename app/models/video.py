@@ -11,12 +11,16 @@ from app.models.user import TimestampMixin
 
 class VideoStatus:
     PENDING = "pending"
-    DOWNLOADING = "downloading"
-    EXTRACTING_AUDIO = "extracting_audio"
     TRANSCRIBING = "transcribing"
     GENERATING_NOTES = "generating_notes"
     COMPLETED = "completed"
     FAILED = "failed"
+
+    # No longer written: the pipeline stopped downloading and locally
+    # transcribing audio when transcripts moved to the YouTubeTranscripts.co
+    # API. Kept so rows created before that switch still render.
+    DOWNLOADING = "downloading"
+    EXTRACTING_AUDIO = "extracting_audio"
 
 
 class Video(TimestampMixin, Base):

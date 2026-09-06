@@ -45,11 +45,11 @@ async def process_video(
     )
 
     # Get video info to check duration
-    from app.services.youtube_downloader import YouTubeDownloaderService
-    downloader = YouTubeDownloaderService()
+    from app.services.youtube_metadata import YouTubeMetadataService
+    metadata = YouTubeMetadataService()
 
     try:
-        info = downloader.get_video_info(request.youtube_url)
+        info = metadata.get_video_info(request.youtube_url)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid YouTube URL: {e}")
 
