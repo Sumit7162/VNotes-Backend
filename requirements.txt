@@ -13,7 +13,11 @@ pydantic==2.10.3
 pydantic-settings==2.7.0
 
 # Auth - Google & custom JWT
-google-auth==2.30.0
+# The [requests] extra is load-bearing: core/security.py uses the requests
+# transport to verify Google ID tokens, and google-auth treats requests as
+# optional. It used to arrive transitively via youtube-transcript-api, so
+# dropping that package took it with it and broke startup.
+google-auth[requests]==2.30.0
 pyjwt[crypto]==2.10.1
 python-jose[cryptography]==3.3.0
 httpx==0.28.1
