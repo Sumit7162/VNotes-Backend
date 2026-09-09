@@ -54,36 +54,6 @@ class UsageLimitService:
                 limit_type="video_duration",
             )
 
-        self._validate_daily_counts(user_id, duration_minutes)
-
-    def validate_transcript_limits(self, user_id: uuid.UUID, duration_minutes: int) -> None:
-        """Check if a user can turn another uploaded transcript into notes.
-
-        An uploaded transcript costs the same daily allowance as a video, so it
-        goes through the same buckets. ``duration_minutes`` is estimated from
-        the transcript's word count rather than measured, so the message says
-        so - a user whose 40-minute lecture notes are refused should be able to
-        see why without having timed the recording.
-        """
-        if duration_minutes > settings.free_max_duration_minutes:
-            raise UsageLimitExceeded(
-                message=(
-                    f"This transcript is about {duration_minutes} minutes of speech, over the "
-                    f"{settings.free_max_duration_minutes} minute maximum. Split it into parts "
-                    "and upload them separately."
-                ),
-                limit_type="video_duration",
-            )
-
-        self._validate_daily_counts(user_id, duration_minutes)
-
-    def _validate_daily_counts(self, user_id: uuid.UUID, duration_minutes: int) -> None:
-        """Enforce the per-day caps, which are split by length.
-
-        Under 15 minutes counts against the short bucket, 15 minutes and over
-        against the long one. Shared by both entry points so a URL and an
-        uploaded transcript draw on the same allowance.
-        """
         usage = self.usage_repo.get_today(user_id)
 
         # Videos under 15 minutes: enforce daily limit of 10
@@ -101,6 +71,12 @@ class UsageLimitService:
                 message=f"Daily limit of {settings.free_daily_videos} videos (15-30 min) reached.",
                 limit_type="daily_videos",
             )
+
+    # A transcript the user uploads has no limit and no matching validator.
+    # The plan's caps exist to ration what a submission costs us - a transcript
+    # API credit and the wait for a fetch - and an upload spends neither: the
+    # text arrives with the request. So uploads are unlimited in length and in
+    # number, and are not counted against the daily video allowance either.
 
     def record_usage(self, user_id: uuid.UUID, duration_minutes: int) -> None:
         """Record completed video processing usage."""

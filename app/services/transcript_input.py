@@ -19,11 +19,15 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Below this there is not enough material for the model to write notes from;
-# it is almost always a mis-paste. The upper bound is a guard against a user
-# pasting a whole book: notes generation slices the text into chunks and the
-# chunk cap would silently drop the tail, so refuse clearly instead.
+# it is almost always a mis-paste.
 MIN_TRANSCRIPT_CHARS = 200
-MAX_TRANSCRIPT_CHARS = 600_000
+
+# There is no length limit on an upload - notes generation widens its slices
+# rather than dropping the tail, so a long transcript is covered in full. This
+# is only a sanity ceiling on the request body, set well past any real
+# transcript (roughly a four-hour recording) so that a runaway paste fails with
+# a clear message instead of an opaque error from the model.
+MAX_TRANSCRIPT_CHARS = 2_000_000
 
 # Average speaking rate used to estimate how long the recording behind a
 # transcript ran. A transcript carries no runtime of its own, but the free

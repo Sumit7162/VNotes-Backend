@@ -76,7 +76,9 @@ class VideoProcessingService:
                 )
 
             # Step 3 onwards is shared with the uploaded-transcript pipeline.
-            self._notes_from_transcript(video, user_id, transcript, title, duration_seconds)
+            self._notes_from_transcript(
+                video, user_id, transcript, title, duration_seconds, record_usage=True
+            )
 
         except Exception as e:
             logger.error("processing_failed", video_id=str(video_id), error=str(e))
@@ -96,8 +98,9 @@ class VideoProcessingService:
         The same pipeline as ``process_video`` minus its first two steps: there
         is no URL to look up and no transcript to fetch, because the caller
         already cleaned and validated the text. ``duration_seconds`` is the
-        runtime estimated from the transcript's length, which is what the usage
-        counter is measured in.
+        runtime estimated from the transcript's length, recorded so the finished
+        record has a length to show. It is not charged to the daily allowance:
+        an upload spends no transcript API credit, so it is not rationed.
         """
         video = self.video_repo.get_by_id(video_id)
         if not video:
@@ -105,7 +108,9 @@ class VideoProcessingService:
 
         try:
             title = video.title or "Uploaded Transcript"
-            self._notes_from_transcript(video, user_id, transcript, title, duration_seconds)
+            self._notes_from_transcript(
+                video, user_id, transcript, title, duration_seconds, record_usage=False
+            )
         except Exception as e:
             logger.error("transcript_processing_failed", video_id=str(video_id), error=str(e))
             self.video_repo.update_status(video, VideoStatus.FAILED, error_message=str(e))
@@ -117,12 +122,15 @@ class VideoProcessingService:
         transcript: str,
         title: str,
         duration_seconds: int | None,
+        record_usage: bool,
     ) -> None:
         """Store the transcript, generate notes from it and record the usage.
 
         Shared by both entry points, which differ only in how they come by the
         transcript. Exceptions propagate so each caller marks its own record
-        failed with the cleanup that entry point needs.
+        failed with the cleanup that entry point needs. ``record_usage`` is
+        false for an upload, which is not rationed and so must not eat into the
+        allowance a YouTube submission draws on.
         """
         video_id = video.id
 
@@ -145,14 +153,15 @@ class VideoProcessingService:
             video_id=video_id, markdown_content=notes, model_used=settings.groq_model
         )
 
-        duration_minutes = (duration_seconds or 0) // 60
-        self.usage_repo.increment_usage(user_id, duration_minutes)
-        logger.info(
-            "usage_recorded",
-            video_id=str(video_id),
-            user_id=str(user_id),
-            minutes=duration_minutes,
-        )
+        if record_usage:
+            duration_minutes = (duration_seconds or 0) // 60
+            self.usage_repo.increment_usage(user_id, duration_minutes)
+            logger.info(
+                "usage_recorded",
+                video_id=str(video_id),
+                user_id=str(user_id),
+                minutes=duration_minutes,
+            )
 
         # Discard any media, then mark complete.
         self._discard_media(video)

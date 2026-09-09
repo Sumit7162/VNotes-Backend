@@ -111,6 +111,8 @@ async def process_transcript(
     The counterpart to /process: same notes pipeline, but the transcript comes
     from the user instead of being fetched for a URL. Caption files (.srt/.vtt)
     are accepted as-is and stripped of their timing scaffolding here.
+
+    Unlike /process this is not rationed - see UsageLimitService for why.
     """
     user_repo = UserRepository(db)
     user = user_repo.get_or_create(
@@ -125,15 +127,11 @@ async def process_transcript(
     except transcript_input.TranscriptInputError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # A transcript has no runtime of its own, so the free plan's minute-based
-    # limits are applied to the runtime estimated from its word count.
+    # No limit check: an upload costs no transcript API credit and no fetch, so
+    # it is unlimited in length and in number and does not draw on the daily
+    # video allowance. The runtime estimated from the word count is still
+    # recorded, purely so the record has a length to display.
     duration_minutes = prepared.estimated_duration_seconds // 60
-
-    usage_service = UsageLimitService(db)
-    try:
-        usage_service.validate_transcript_limits(user.id, duration_minutes)
-    except UsageLimitExceeded as e:
-        raise HTTPException(status_code=429, detail=e.message)
 
     title = (request.title or "").strip() or "Uploaded Transcript"
 

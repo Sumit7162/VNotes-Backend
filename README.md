@@ -61,10 +61,16 @@ captions produce, and rejoins cues that broke mid-sentence; plain prose passes
 through with its paragraphs intact. The frontend reads an uploaded file in the
 browser and posts its text, so a paste and a file upload are the same request.
 
-A transcript carries no runtime, so one is estimated from its word count at 150
-words per minute. That estimate is what the free plan's minute-based limits are
-applied to and what the usage counter records, which keeps one allowance across
-both entry points.
+Uploads are not rationed: unlimited in length, unlimited in number, and not
+counted against the daily video allowance. The plan's caps exist to ration what
+a submission costs - a transcript API credit and the wait for a fetch - and an
+upload spends neither, because the text arrives with the request. A runtime is
+still estimated from the word count at 150 words per minute, but only so the
+finished record has a length to display.
+
+The one remaining bound is a sanity ceiling on the request body, set well past
+any real transcript, so that a runaway paste fails with a clear message rather
+than an opaque error from the model.
 
 ### Transcript API credits
 
