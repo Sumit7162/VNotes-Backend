@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Cloud Run deploy config generated from .env
+env.yaml
