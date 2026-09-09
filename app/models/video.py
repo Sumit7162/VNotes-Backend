@@ -23,6 +23,15 @@ class VideoStatus:
     EXTRACTING_AUDIO = "extracting_audio"
 
 
+class VideoSource:
+    """Where the transcript behind a record came from."""
+
+    # A YouTube URL the user submitted; the transcript is fetched for them.
+    YOUTUBE = "youtube"
+    # A transcript the user uploaded or pasted; there is no URL and no fetch.
+    TRANSCRIPT = "transcript"
+
+
 class Video(TimestampMixin, Base):
     __tablename__ = "videos"
 
@@ -32,7 +41,11 @@ class Video(TimestampMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    youtube_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Null for transcript uploads, which have no source URL.
+    youtube_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(20), default=VideoSource.YOUTUBE, server_default=VideoSource.YOUTUBE, nullable=False
+    )
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(

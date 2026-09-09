@@ -46,6 +46,26 @@ The web client lives in a separate repository:
    rather than only the part that fit in one request, then the parts are merged.
 5. **Store** — notes are written to the database and to `notes/`.
 
+## Notes from a transcript you already have
+
+`POST /api/videos/process-transcript` is the second way in. The user uploads or
+pastes a transcript and it goes straight to step 4 above - there is no metadata
+lookup, no transcript API call, and so no credit spent. It exists for material
+the transcript API cannot reach: a lecture recording, a meeting export, a
+private or age-restricted video, or a caption file the user already downloaded.
+
+The endpoint takes the raw text, so `.srt` and `.vtt` files can be sent exactly
+as they come. `app/services/transcript_input.py` strips the cue numbers,
+timings and inline caption markup, drops the repeated lines that rolling
+captions produce, and rejoins cues that broke mid-sentence; plain prose passes
+through with its paragraphs intact. The frontend reads an uploaded file in the
+browser and posts its text, so a paste and a file upload are the same request.
+
+A transcript carries no runtime, so one is estimated from its word count at 150
+words per minute. That estimate is what the free plan's minute-based limits are
+applied to and what the usage counter records, which keeps one allowance across
+both entry points.
+
 ### Transcript API credits
 
 Native captions cost 1 credit per video, the Whisper fallback 1 credit per
@@ -119,6 +139,7 @@ of inactivity, so the first request after a pause waits for a cold start.
 | POST | `/api/auth/google` | Exchange a Google credential for an app JWT |
 | GET | `/api/auth/me` | Current user |
 | POST | `/api/videos/process` | Submit a YouTube URL for processing |
+| POST | `/api/videos/process-transcript` | Submit a transcript directly, skipping the fetch |
 | GET | `/api/videos` | List the caller's videos |
 | GET | `/api/videos/{id}` | One video, including status |
 | DELETE | `/api/videos/{id}` | Delete a video and its files |

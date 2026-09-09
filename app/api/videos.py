@@ -5,9 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.middleware.auth import CurrentUser
+from app.models.video import VideoSource
 from app.repositories.user import UserRepository
 from app.repositories.video import VideoRepository
-from app.schemas.video import VideoListResponse, VideoProcessRequest, VideoRead
+from app.schemas.video import (
+    TranscriptProcessRequest,
+    VideoListResponse,
+    VideoProcessRequest,
+    VideoRead,
+)
+from app.services import transcript_input
 from app.services.usage_limit import UsageLimitExceeded, UsageLimitService
 from app.services.video_processing import VideoProcessingService
 from app.utils.logger import get_logger
@@ -24,6 +31,17 @@ def _process_video_background(video_id, user_id, db_url: str):
     try:
         service = VideoProcessingService(db)
         service.process_video(video_id, user_id)
+    finally:
+        db.close()
+
+
+def _process_transcript_background(video_id, user_id, transcript: str, duration_seconds: int):
+    """Background task wrapper for notes from a user-supplied transcript."""
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        service = VideoProcessingService(db)
+        service.process_transcript(video_id, user_id, transcript, duration_seconds)
     finally:
         db.close()
 
@@ -78,6 +96,72 @@ async def process_video(
     background_tasks.add_task(_process_video_background, video.id, user.id, db.bind.url)
 
     logger.info("video_processing_started", video_id=str(video.id), user_id=str(user.id))
+    return video
+
+
+@router.post("/process-transcript", response_model=VideoRead)
+async def process_transcript(
+    request: TranscriptProcessRequest,
+    current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Generate notes from a transcript the user uploaded or pasted.
+
+    The counterpart to /process: same notes pipeline, but the transcript comes
+    from the user instead of being fetched for a URL. Caption files (.srt/.vtt)
+    are accepted as-is and stripped of their timing scaffolding here.
+    """
+    user_repo = UserRepository(db)
+    user = user_repo.get_or_create(
+        google_id=current_user.google_id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        avatar_url=current_user.avatar_url,
+    )
+
+    try:
+        prepared = transcript_input.prepare(request.transcript)
+    except transcript_input.TranscriptInputError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # A transcript has no runtime of its own, so the free plan's minute-based
+    # limits are applied to the runtime estimated from its word count.
+    duration_minutes = prepared.estimated_duration_seconds // 60
+
+    usage_service = UsageLimitService(db)
+    try:
+        usage_service.validate_transcript_limits(user.id, duration_minutes)
+    except UsageLimitExceeded as e:
+        raise HTTPException(status_code=429, detail=e.message)
+
+    title = (request.title or "").strip() or "Uploaded Transcript"
+
+    video_repo = VideoRepository(db)
+    video = video_repo.create(
+        user_id=user.id,
+        youtube_url=None,
+        title=title[:500],
+        duration_seconds=prepared.estimated_duration_seconds,
+        source=VideoSource.TRANSCRIPT,
+    )
+
+    background_tasks.add_task(
+        _process_transcript_background,
+        video.id,
+        user.id,
+        prepared.text,
+        prepared.estimated_duration_seconds,
+    )
+
+    logger.info(
+        "transcript_processing_started",
+        video_id=str(video.id),
+        user_id=str(user.id),
+        words=prepared.word_count,
+        caption_file=prepared.was_caption_file,
+        estimated_minutes=duration_minutes,
+    )
     return video
 
 

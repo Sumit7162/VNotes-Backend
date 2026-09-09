@@ -75,45 +75,89 @@ class VideoProcessingService:
                     duration_seconds=duration_seconds,
                 )
 
-            transcript_dir = Path(settings.transcript_dir)
-            transcript_dir.mkdir(parents=True, exist_ok=True)
-            (transcript_dir / f"{video_id}.txt").write_text(transcript, encoding="utf-8")
-
-            # Step 3: Generate notes
-            self.video_repo.update_status(video, VideoStatus.GENERATING_NOTES)
-            logger.info("processing_step", video_id=str(video_id), step="generating_notes")
-
-            # The full transcript is passed through: generate_notes slices it
-            # internally so a long video gets notes for its whole runtime.
-            notes = self.note_generator.generate_notes(transcript, title)
-
-            notes_dir = Path(settings.notes_dir)
-            notes_dir.mkdir(parents=True, exist_ok=True)
-            (notes_dir / f"{video_id}.md").write_text(notes, encoding="utf-8")
-
-            self.note_repo.create(
-                video_id=video_id, markdown_content=notes, model_used=settings.groq_model
-            )
-
-            duration_minutes = (duration_seconds or 0) // 60
-            self.usage_repo.increment_usage(user_id, duration_minutes)
-            logger.info(
-                "usage_recorded",
-                video_id=str(video_id),
-                user_id=str(user_id),
-                minutes=duration_minutes,
-            )
-
-            # Step 4: Discard any media, then mark complete
-            self._discard_media(video)
-            self.video_repo.update_status(video, VideoStatus.COMPLETED, clear_error=True)
-            logger.info("processing_complete", video_id=str(video_id))
+            # Step 3 onwards is shared with the uploaded-transcript pipeline.
+            self._notes_from_transcript(video, user_id, transcript, title, duration_seconds)
 
         except Exception as e:
             logger.error("processing_failed", video_id=str(video_id), error=str(e))
             # A failed run must not leave media behind either.
             self._discard_media(video)
             self.video_repo.update_status(video, VideoStatus.FAILED, error_message=str(e))
+
+    def process_transcript(
+        self,
+        video_id: uuid.UUID,
+        user_id: uuid.UUID,
+        transcript: str,
+        duration_seconds: int,
+    ) -> None:
+        """Turn a transcript the user supplied directly into notes.
+
+        The same pipeline as ``process_video`` minus its first two steps: there
+        is no URL to look up and no transcript to fetch, because the caller
+        already cleaned and validated the text. ``duration_seconds`` is the
+        runtime estimated from the transcript's length, which is what the usage
+        counter is measured in.
+        """
+        video = self.video_repo.get_by_id(video_id)
+        if not video:
+            raise VideoProcessingError(f"Video {video_id} not found")
+
+        try:
+            title = video.title or "Uploaded Transcript"
+            self._notes_from_transcript(video, user_id, transcript, title, duration_seconds)
+        except Exception as e:
+            logger.error("transcript_processing_failed", video_id=str(video_id), error=str(e))
+            self.video_repo.update_status(video, VideoStatus.FAILED, error_message=str(e))
+
+    def _notes_from_transcript(
+        self,
+        video,
+        user_id: uuid.UUID,
+        transcript: str,
+        title: str,
+        duration_seconds: int | None,
+    ) -> None:
+        """Store the transcript, generate notes from it and record the usage.
+
+        Shared by both entry points, which differ only in how they come by the
+        transcript. Exceptions propagate so each caller marks its own record
+        failed with the cleanup that entry point needs.
+        """
+        video_id = video.id
+
+        transcript_dir = Path(settings.transcript_dir)
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / f"{video_id}.txt").write_text(transcript, encoding="utf-8")
+
+        self.video_repo.update_status(video, VideoStatus.GENERATING_NOTES, clear_error=True)
+        logger.info("processing_step", video_id=str(video_id), step="generating_notes")
+
+        # The full transcript is passed through: generate_notes slices it
+        # internally so a long video gets notes for its whole runtime.
+        notes = self.note_generator.generate_notes(transcript, title)
+
+        notes_dir = Path(settings.notes_dir)
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        (notes_dir / f"{video_id}.md").write_text(notes, encoding="utf-8")
+
+        self.note_repo.create(
+            video_id=video_id, markdown_content=notes, model_used=settings.groq_model
+        )
+
+        duration_minutes = (duration_seconds or 0) // 60
+        self.usage_repo.increment_usage(user_id, duration_minutes)
+        logger.info(
+            "usage_recorded",
+            video_id=str(video_id),
+            user_id=str(user_id),
+            minutes=duration_minutes,
+        )
+
+        # Discard any media, then mark complete.
+        self._discard_media(video)
+        self.video_repo.update_status(video, VideoStatus.COMPLETED, clear_error=True)
+        logger.info("processing_complete", video_id=str(video_id))
 
     def _discard_media(self, video) -> None:
         """Delete any video/audio file this record points at, and forget the paths.

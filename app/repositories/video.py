@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from app.models.video import Video
+from app.models.video import Video, VideoSource
 
 
 class VideoRepository:
@@ -32,15 +32,17 @@ class VideoRepository:
     def create(
         self,
         user_id: uuid.UUID,
-        youtube_url: str,
+        youtube_url: Optional[str] = None,
         title: Optional[str] = None,
         duration_seconds: Optional[int] = None,
+        source: str = VideoSource.YOUTUBE,
     ) -> Video:
         video = Video(
             user_id=user_id,
             youtube_url=youtube_url,
             title=title,
             duration_seconds=duration_seconds,
+            source=source,
         )
         self.db.add(video)
         self.db.commit()

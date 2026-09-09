@@ -54,6 +54,36 @@ class UsageLimitService:
                 limit_type="video_duration",
             )
 
+        self._validate_daily_counts(user_id, duration_minutes)
+
+    def validate_transcript_limits(self, user_id: uuid.UUID, duration_minutes: int) -> None:
+        """Check if a user can turn another uploaded transcript into notes.
+
+        An uploaded transcript costs the same daily allowance as a video, so it
+        goes through the same buckets. ``duration_minutes`` is estimated from
+        the transcript's word count rather than measured, so the message says
+        so - a user whose 40-minute lecture notes are refused should be able to
+        see why without having timed the recording.
+        """
+        if duration_minutes > settings.free_max_duration_minutes:
+            raise UsageLimitExceeded(
+                message=(
+                    f"This transcript is about {duration_minutes} minutes of speech, over the "
+                    f"{settings.free_max_duration_minutes} minute maximum. Split it into parts "
+                    "and upload them separately."
+                ),
+                limit_type="video_duration",
+            )
+
+        self._validate_daily_counts(user_id, duration_minutes)
+
+    def _validate_daily_counts(self, user_id: uuid.UUID, duration_minutes: int) -> None:
+        """Enforce the per-day caps, which are split by length.
+
+        Under 15 minutes counts against the short bucket, 15 minutes and over
+        against the long one. Shared by both entry points so a URL and an
+        uploaded transcript draw on the same allowance.
+        """
         usage = self.usage_repo.get_today(user_id)
 
         # Videos under 15 minutes: enforce daily limit of 10
