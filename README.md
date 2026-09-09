@@ -1,3 +1,14 @@
+---
+title: VNotes Backend
+emoji: 📝
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+short_description: FastAPI backend for VNotes, an AI note-taker for YouTube.
+---
+
 # VNotes — Backend
 
 FastAPI service behind VNotes, an AI note-taker for YouTube videos. It takes a
@@ -77,6 +88,28 @@ docker compose up --build
 ```
 
 That brings up PostgreSQL and the API on 8000.
+
+## Deploying to Hugging Face Spaces
+
+The repository root doubles as a Docker Space: the YAML block at the top of this
+file is the Space config (`sdk: docker`, `app_port: 7860`) and the `Dockerfile`
+runs as UID 1000, which is what Spaces requires.
+
+```bash
+git remote add hf https://huggingface.co/spaces/<user>/<space>
+git push hf main
+```
+
+Set every secret under **Space → Settings → Variables and secrets** rather than
+committing a `.env`; the Space repository is public. The ones the app cannot
+start usefully without are `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GROQ_API_KEY`
+and `TRANSCRIPT_API_KEY`, plus `JWT_SECRET_KEY` and a `CORS_ORIGINS` that lists
+the deployed frontend.
+
+Two limits are worth knowing. The Space filesystem is ephemeral, so `transcripts/`
+and `notes/` are lost on every restart — the database is the durable copy, which
+is why notes are written to both. And a free CPU Space is paused after a stretch
+of inactivity, so the first request after a pause waits for a cold start.
 
 ## Endpoints
 

@@ -9,14 +9,23 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-
 COPY . .
 
 # Create storage directories
 RUN mkdir -p transcripts notes
 
-# Expose local default port. Cloud Run sets PORT=8080 at runtime.
-EXPOSE 8000
+# Hugging Face Spaces runs the container as a non-root user with UID 1000, so
+# /app and the two runtime storage directories have to belong to that user or
+# startup fails the first time it writes a transcript. Named volumes mounted
+# over these paths inherit the ownership from the image, so docker compose
+# keeps working too.
+RUN useradd -m -u 1000 user && chown -R user:user /app
+USER user
+
+# Hugging Face Spaces routes traffic to 7860 (see app_port in README.md).
+# Cloud Run and docker compose override PORT.
+ENV PORT=7860
+EXPOSE 7860
 
 # Run with uvicorn
-CMD ["sh", "-c", "alembic upgrade head || echo 'Alembic migration skipped; continuing startup'; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "alembic upgrade head || echo 'Alembic migration skipped; continuing startup'; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
