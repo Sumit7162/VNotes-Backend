@@ -317,6 +317,15 @@ The full detailed material from every part, in video order."""
             sections.append("")
         return "\n".join(sections).strip() + "\n"
 
+    def complete(self, prompt: str, temperature: float = 0.3) -> str:
+        """Run one prompt through the configured model and return its reply.
+
+        The public door onto the same retrying client the note pipeline uses, so
+        other features - the quiz generator, for one - do not each need their own
+        Groq client and their own rate-limit handling.
+        """
+        return self._call_llm(prompt, temperature=temperature)
+
     def summarize_transcript(self, transcript: str, title: str = "Video") -> str:
         """Return only the transcript summary."""
         return self._summarize_transcript(transcript, title)

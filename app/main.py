@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     # Auto-create database tables as fallback if alembic migrations not applied
     try:
         from app.core.database import engine, Base
-        from app.models import User, Video, Note, UsageTracking  # noqa: F401
+        from app.models import User, Video, Note, UsageTracking, Quiz, QuizAttempt  # noqa: F401
         Base.metadata.create_all(bind=engine)
         logger.info("database_tables_verified")
     except Exception as e:
@@ -59,11 +59,13 @@ from app.api.auth import router as auth_router
 from app.api.videos import router as videos_router
 from app.api.notes import router as notes_router
 from app.api.usage import router as usage_router
+from app.api.quizzes import router as quizzes_router
 
 app.include_router(auth_router)
 app.include_router(videos_router)
 app.include_router(notes_router)
 app.include_router(usage_router)
+app.include_router(quizzes_router)
 
 
 @app.get("/api/health")
