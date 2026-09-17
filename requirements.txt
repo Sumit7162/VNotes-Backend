@@ -18,6 +18,9 @@ pydantic-settings==2.7.0
 # optional. It used to arrive transitively via youtube-transcript-api, so
 # dropping that package took it with it and broke startup.
 google-auth[requests]==2.30.0
+# Password hashing. Used directly rather than through passlib, whose 1.7.4
+# release crashes on reading bcrypt 4.x's version metadata.
+bcrypt==4.2.1
 pyjwt[crypto]==2.10.1
 python-jose[cryptography]==3.3.0
 httpx==0.28.1
@@ -37,4 +40,6 @@ pytest-asyncio==0.24.0
 httpx==0.28.1
 
 # Added dependencies
-email-validator
+# email-validator backs pydantic's EmailStr and, with check_deliverability,
+# the MX lookup that rejects addresses whose domain cannot receive mail.
+email-validator==2.2.0

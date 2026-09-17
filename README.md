@@ -130,12 +130,49 @@ Set every secret under **Space → Settings → Variables and secrets** rather t
 committing a `.env`; the Space repository is public. The ones the app cannot
 start usefully without are `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GROQ_API_KEY`
 and `TRANSCRIPT_API_KEY`, plus `JWT_SECRET_KEY` and a `CORS_ORIGINS` that lists
-the deployed frontend.
+the deployed frontend. Email sign-in additionally needs `BREVO_API_KEY`,
+`BREVO_SENDER_EMAIL` and a `FRONTEND_URL` pointing at the deployed site.
 
 Two limits are worth knowing. The Space filesystem is ephemeral, so `transcripts/`
 and `notes/` are lost on every restart — the database is the durable copy, which
 is why notes are written to both. And a free CPU Space is paused after a stretch
 of inactivity, so the first request after a pause waits for a cold start.
+
+## Signing in
+
+Two ways in, both landing on the same account when they share an email address.
+
+**Google** is unchanged: the browser hands over a Google credential, the API
+verifies it and issues its own JWT.
+
+**Email and password** is three steps, because an address typed into a form
+proves nothing about who owns it:
+
+1. `POST /api/auth/signup` checks the address is syntactically valid, that its
+   domain actually has MX records (so `gmial.com` is caught here), and that it
+   is not a known disposable-inbox domain. It then creates the account with
+   `email_verified = false` and emails a link.
+2. The link carries a signed, one-hour-or-so JWT with a `purpose` claim, so it
+   cannot be replayed as a session token or as a password-reset token. Nothing
+   is stored, so there is no table to clean up.
+3. `POST /api/auth/login` refuses with **403** while `email_verified` is false.
+   Following the link flips it and returns a session token, which signs the
+   person straight in.
+
+Mail goes out through **Brevo** (https://app.brevo.com) — a plain HTTPS API, so
+it works from Cloud Run where outbound SMTP is blocked, and 300 messages a day
+on the free plan. Set it up once:
+
+1. *Senders, Domains & Dedicated IPs → Senders* — add `BREVO_SENDER_EMAIL` and
+   click the confirmation Brevo emails to it. Brevo refuses to send from an
+   unverified sender, so this is not optional.
+2. *SMTP & API → API Keys → Generate a new API key* → `BREVO_API_KEY`.
+3. Optional but worth doing: authenticate the sending domain (SPF/DKIM/DMARC)
+   on the same page, or the mail is likely to land in spam.
+
+`FRONTEND_URL` is the base of the link in the email, so it must point at the
+deployed site in production. With `BREVO_API_KEY` empty the service logs the
+link instead of sending it, which is enough to develop against locally.
 
 ## Endpoints
 
@@ -143,6 +180,12 @@ of inactivity, so the first request after a pause waits for a cold start.
 |---|---|---|
 | GET | `/api/health` | Health check |
 | POST | `/api/auth/google` | Exchange a Google credential for an app JWT |
+| POST | `/api/auth/signup` | Create an unverified account and email it a verification link |
+| POST | `/api/auth/login` | Exchange an email address and password for an app JWT |
+| POST | `/api/auth/verify-email` | Redeem the token from the verification link; returns a JWT |
+| POST | `/api/auth/resend-verification` | Send the verification link again |
+| POST | `/api/auth/forgot-password` | Email a password-reset link |
+| POST | `/api/auth/reset-password` | Redeem the token from the reset link and set a new password |
 | GET | `/api/auth/me` | Current user |
 | POST | `/api/videos/process` | Submit a YouTube URL for processing |
 | POST | `/api/videos/process-transcript` | Submit a transcript directly, skipping the fetch |

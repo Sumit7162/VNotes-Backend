@@ -55,12 +55,7 @@ async def process_video(
 ):
     """Submit a YouTube URL for processing."""
     user_repo = UserRepository(db)
-    user = user_repo.get_or_create(
-        google_id=current_user.google_id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        avatar_url=current_user.avatar_url,
-    )
+    user = user_repo.resolve_or_raise(current_user)
 
     # Get video info to check duration
     from app.services.youtube_metadata import YouTubeMetadataService
@@ -115,12 +110,7 @@ async def process_transcript(
     Unlike /process this is not rationed - see UsageLimitService for why.
     """
     user_repo = UserRepository(db)
-    user = user_repo.get_or_create(
-        google_id=current_user.google_id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        avatar_url=current_user.avatar_url,
-    )
+    user = user_repo.resolve_or_raise(current_user)
 
     try:
         prepared = transcript_input.prepare(request.transcript)
@@ -172,12 +162,7 @@ def list_videos(
 ):
     """List videos for the current user."""
     user_repo = UserRepository(db)
-    user = user_repo.get_or_create(
-        google_id=current_user.google_id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        avatar_url=current_user.avatar_url,
-    )
+    user = user_repo.resolve_or_raise(current_user)
 
     video_repo = VideoRepository(db)
     videos = video_repo.get_by_user(user.id, limit=limit, offset=offset)
@@ -214,12 +199,7 @@ def delete_video(
     import os
 
     user_repo = UserRepository(db)
-    user = user_repo.get_or_create(
-        google_id=current_user.google_id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        avatar_url=current_user.avatar_url,
-    )
+    user = user_repo.resolve_or_raise(current_user)
 
     video_repo = VideoRepository(db)
     video = video_repo.get_by_id(uuid.UUID(video_id))

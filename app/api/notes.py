@@ -35,12 +35,7 @@ def list_notes(
 ):
     """List all notes for the current user."""
     user_repo = UserRepository(db)
-    user = user_repo.get_or_create(
-        google_id=current_user.google_id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        avatar_url=current_user.avatar_url,
-    )
+    user = user_repo.resolve_or_raise(current_user)
 
     note_repo = NoteRepository(db)
     notes = note_repo.list_by_user(user.id)

@@ -74,6 +74,38 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Password sign-in
+    #
+    # A user who signs up with an email address and a password cannot use the
+    # app until the address is proved to be theirs, so signup only creates the
+    # account - the verification link is what turns it on. The link carries a
+    # signed, short-lived JWT rather than a row in a table, which keeps the
+    # whole flow stateless and free of a cleanup job.
+    email_verification_expire_hours: int = 24
+    password_reset_expire_minutes: int = 60
+    password_min_length: int = 8
+    # Look up the address's domain for MX records before accepting a signup.
+    # This rejects typos like "gmial.com" at the door instead of sending a
+    # verification email into a black hole. Turn it off if outbound DNS is
+    # blocked wherever this runs; syntax checking still applies.
+    email_check_deliverability: bool = True
+
+    # Brevo (https://app.brevo.com) - transactional email.
+    #
+    # Used to deliver verification and password-reset links. The free plan
+    # allows 300 emails a day, which is well clear of what signups need. The
+    # key is created under Brevo -> SMTP & API -> API Keys, and the sender
+    # address MUST be one Brevo has verified (Senders, Domains & Dedicated IPs
+    # -> Senders), otherwise every send is rejected.
+    brevo_api_key: str = ""
+    brevo_api_url: str = "https://api.brevo.com/v3/smtp/email"
+    brevo_sender_email: str = ""
+    brevo_sender_name: str = "V-Notes AI"
+    # Set this to the deployed site, e.g. https://v-notes-five.vercel.app. It is
+    # the base of the link in the email, so a wrong value sends every user to
+    # the wrong place.
+    frontend_url: str = "http://localhost:5173"
+
     # YouTube Transcripts API - https://youtubetranscripts.co
     #
     # The one and only source of transcripts. It serves a video's native
