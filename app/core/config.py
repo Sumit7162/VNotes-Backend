@@ -66,7 +66,7 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins_env: str = Field(
-        default='["http://localhost:5173","https://v-notes-five.vercel.app"]',
+        default='["http://localhost:5173","https://vnotes-lime.vercel.app"]',
         validation_alias="CORS_ORIGINS",
     )
     cors_origin_regex: Optional[str] = r"http://(localhost|127\.0\.0\.1):\d+"
@@ -101,9 +101,11 @@ class Settings(BaseSettings):
     brevo_api_url: str = "https://api.brevo.com/v3/smtp/email"
     brevo_sender_email: str = ""
     brevo_sender_name: str = "V-Notes AI"
-    # Set this to the deployed site, e.g. https://v-notes-five.vercel.app. It is
-    # the base of the link in the email, so a wrong value sends every user to
-    # the wrong place.
+    # Set this to the deployed site, e.g. https://vnotes-lime.vercel.app. It is
+    # the base of the link in the email, so a wrong value sends every user to a
+    # page that does not exist - and the mistake is only visible once somebody
+    # opens their inbox. On a hosted backend this comes from the host's own
+    # environment settings, not from a .env file in the repository.
     frontend_url: str = "http://localhost:5173"
 
     # YouTube Transcripts API - https://youtubetranscripts.co
