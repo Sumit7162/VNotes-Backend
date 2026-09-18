@@ -130,7 +130,8 @@ class VideoProcessingService:
         transcript. Exceptions propagate so each caller marks its own record
         failed with the cleanup that entry point needs. ``record_usage`` is
         false for an upload, which is not rationed and so must not eat into the
-        allowance a YouTube submission draws on.
+        allowance a YouTube submission draws on. A topic filter is read off the
+        record, so both entry points narrow the notes the same way.
         """
         video_id = video.id
 
@@ -142,8 +143,12 @@ class VideoProcessingService:
         logger.info("processing_step", video_id=str(video_id), step="generating_notes")
 
         # The full transcript is passed through: generate_notes slices it
-        # internally so a long video gets notes for its whole runtime.
-        notes = self.note_generator.generate_notes(transcript, title)
+        # internally so a long video gets notes for its whole runtime - or, when
+        # the record carries a topic filter, only the slices that speak to those
+        # topics.
+        notes = self.note_generator.generate_notes(
+            transcript, title, focus_topics=video.focus_topics
+        )
 
         notes_dir = Path(settings.notes_dir)
         notes_dir.mkdir(parents=True, exist_ok=True)

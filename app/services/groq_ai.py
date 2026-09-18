@@ -53,6 +53,111 @@ def retry_after_seconds(error: Exception) -> Optional[float]:
 # educational; used to short-circuit multi-segment generation.
 NOT_EDUCATIONAL_MARKER = "does not appear to contain educational content"
 
+# What a transcript slice is asked to reply with when the user narrowed the
+# notes to specific topics and this slice says nothing about any of them. Such
+# a slice is dropped instead of being written up or merged.
+OFF_TOPIC_MARKER = "NO_RELEVANT_CONTENT"
+
+# A longer list than this stops being a filter, and a "topic" past a few words
+# is a sentence; both only bloat every prompt the transcript is fed through.
+MAX_FOCUS_TOPICS = 10
+MAX_FOCUS_TOPIC_CHARS = 120
+# How many topics the document heading names before it falls back to "and N
+# more"; a heading has to stay readable.
+HEADING_TOPICS = 3
+
+
+def parse_focus_topics(raw: Optional[str]) -> list[str]:
+    """Split a user's topic selection into individual topics.
+
+    Commas, semicolons and line breaks all separate, so a list typed by hand
+    and one pasted out of a syllabus behave the same. Blanks and duplicates are
+    dropped and the result is capped.
+    """
+    if not raw:
+        return []
+
+    topics: list[str] = []
+    seen: set[str] = set()
+    for line in raw.splitlines():
+        for piece in line.replace(";", ",").split(","):
+            topic = " ".join(piece.split())[:MAX_FOCUS_TOPIC_CHARS]
+            topic = topic.strip(" -•	")
+            if not topic:
+                continue
+            key = topic.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            topics.append(topic)
+            if len(topics) == MAX_FOCUS_TOPICS:
+                return topics
+    return topics
+
+
+def is_off_topic(notes: str) -> bool:
+    """Whether a slice replied with the "nothing about those topics" marker.
+
+    The model is asked for the bare marker, but it will sometimes wrap it in a
+    code fence or a short apology, so any brief reply carrying it counts.
+    """
+    stripped = notes.strip()
+    return OFF_TOPIC_MARKER in stripped and len(stripped) <= 200
+
+
+def topics_not_covered_message(topics: list[str]) -> str:
+    """The notes returned when nothing in the video matched the chosen topics."""
+    listed = ", ".join(topics)
+    return (
+        f"## No notes for {listed}\n\n"
+        f"Nothing in this video's transcript covers **{listed}**, so there is no "
+        f"material to write notes from.\n\n"
+        f"Try broader topics, check the spelling, or submit it again with no "
+        f"topics to get notes on the whole video.\n"
+    )
+
+
+def focus_heading(title: str, topics: list[str]) -> str:
+    """The document title, naming the filter when there is one."""
+    if not topics:
+        return f"{title} - Study Notes"
+
+    shown = ", ".join(topics[:HEADING_TOPICS])
+    extra = len(topics) - HEADING_TOPICS
+    if extra > 0:
+        shown += f" and {extra} more topic{'s' if extra > 1 else ''}"
+    return f"{title} - Notes on {shown}"
+
+
+def focus_instructions(topics: list[str], scope_noun: str) -> str:
+    """The prompt block that narrows notes to the user's chosen topics.
+
+    ``scope_noun`` names what is being filtered - "the video" for a whole
+    transcript, "this part of the video" for one slice of a long one - so the
+    model is never asked to judge material it was not shown.
+    """
+    if not topics:
+        return ""
+
+    listed = "\n".join(f"- {topic}" for topic in topics)
+    return f"""
+TOPIC FILTER - the user does NOT want notes on the whole video. They asked for
+these topics only:
+{listed}
+
+These rules override the section list below wherever the two disagree:
+- Write up ONLY what the transcript says about those topics.
+- Ignore every other subject in {scope_noun}. Do not summarise it, do not
+  mention it in passing, and do not state that you left anything out.
+- Everything you write must be grounded in what the video actually says about
+  those topics. Your own expertise may clarify, correct and complete that
+  material, but it must not stand in for a topic the video never covers.
+- Keep the sections listed below, but fill them with on-topic material only.
+- If {scope_noun} says nothing about any of those topics, reply with exactly
+  {OFF_TOPIC_MARKER} and nothing else: no heading, no explanation, no apology.
+"""
+
+
 _HEADING = re.compile(r"^(#{1,5})(\s)", re.MULTILINE)
 _FENCE = re.compile(r"^(```|~~~)", re.MULTILINE)
 
@@ -172,43 +277,88 @@ class GroqAIService:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_notes(self, transcript: str, title: str = "Video") -> str:
-        """Generate structured markdown notes covering the *whole* transcript.
+    def generate_notes(
+        self,
+        transcript: str,
+        title: str = "Video",
+        focus_topics: Optional[str] = None,
+    ) -> str:
+        """Generate structured markdown notes from a transcript.
 
         Short transcripts go through in a single call. Longer ones are split
         into ordered segments, each turned into notes, and then merged - so a
         long video produces notes for its full runtime instead of only the
         opening minutes.
+
+        ``focus_topics`` narrows the notes to the subjects the user named: only
+        material the video actually covers about them is written up, and the
+        rest of the runtime is ignored. Segments with nothing on-topic are
+        dropped rather than merged, so a two-hour lecture can yield notes on
+        just the ten minutes that were asked about.
         """
+        topics = parse_focus_topics(focus_topics)
         segments = split_transcript(transcript, self.chunk_chars, self.max_chunks)
 
         if len(segments) == 1:
-            logger.info("generating_notes", title=title, segments=1)
-            return self._generate_segment_notes(segments[0], title, 1, 1)
+            logger.info("generating_notes", title=title, segments=1, focus_topics=topics)
+            notes = self._generate_segment_notes(segments[0], title, 1, 1, topics)
+            if topics and is_off_topic(notes):
+                logger.info("focus_topics_not_covered", title=title, focus_topics=topics)
+                return topics_not_covered_message(topics)
+            return notes
 
         logger.info(
             "generating_notes",
             title=title,
             segments=len(segments),
             transcript_chars=len(transcript),
+            focus_topics=topics,
         )
 
         parts: list[str] = []
         for index, segment in enumerate(segments, start=1):
-            notes = self._generate_segment_notes(segment, title, index, len(segments))
+            notes = self._generate_segment_notes(
+                segment, title, index, len(segments), topics
+            )
             # A refusal on the opening segment means the whole video was judged
             # non-educational; there is nothing to merge.
             if index == 1 and NOT_EDUCATIONAL_MARKER in notes:
                 return notes
+            # Under a topic filter most of a long video is expected to be
+            # irrelevant, so those parts are dropped instead of merged.
+            if topics and is_off_topic(notes):
+                logger.info(
+                    "segment_off_topic", title=title, segment=index, of=len(segments)
+                )
+                continue
             parts.append(notes)
             logger.info("segment_notes_generated", title=title, segment=index, of=len(segments))
 
-        return self._merge_segment_notes(parts, title)
+        if not parts:
+            logger.info("focus_topics_not_covered", title=title, focus_topics=topics)
+            return topics_not_covered_message(topics)
+
+        if len(parts) == 1:
+            # Only one part survived the filter: there is nothing to merge, and
+            # a merge call would only cost another request.
+            return parts[0]
+
+        return self._merge_segment_notes(parts, title, topics)
 
     def _generate_segment_notes(
-        self, transcript: str, title: str, index: int, total: int
+        self,
+        transcript: str,
+        title: str,
+        index: int,
+        total: int,
+        topics: Optional[list[str]] = None,
     ) -> str:
-        """Produce notes for one slice of the transcript."""
+        """Produce notes for one slice of the transcript.
+
+        ``topics`` limits the notes to the subjects the user named; an empty or
+        missing list means notes on everything in the slice.
+        """
+        topics = topics or []
         if total > 1:
             scope = f"""
 This transcript is PART {index} of {total} of one long video. Write notes for
@@ -220,11 +370,15 @@ do not stop early or summarise it away.
             h2 = "###"
         else:
             scope = ""
-            heading = f"# {title} - Study Notes"
+            heading = f"# {focus_heading(title, topics)}"
             h2 = "##"
 
+        focus = focus_instructions(
+            topics, "this part of the video" if total > 1 else "the video"
+        )
+
         prompt = f"""You are an expert educational AI tutor.
-{scope}
+{scope}{focus}
 
 FIRST, analyze the video transcript and classify it. If the video is NOT educational (e.g., entertainment, music, vlogs, random chatter), you MUST refuse to process it by returning ONLY this exact message:
 "This video does not appear to contain educational content. I can only generate notes for coding, math, or theoretical videos."
@@ -260,8 +414,16 @@ Depending on the video type:
         logger.info("segment_notes_ready", title=title, segment=index, of=total, model=self.model)
         return markdown
 
-    def _merge_segment_notes(self, parts: list[str], title: str) -> str:
-        """Fold per-segment notes into one document covering the whole video."""
+    def _merge_segment_notes(
+        self, parts: list[str], title: str, topics: Optional[list[str]] = None
+    ) -> str:
+        """Fold per-segment notes into one document covering the whole video.
+
+        Under a topic filter the parts folded in here are only the ones that had
+        on-topic material, so the merged document covers the chosen topics
+        wherever the video raised them.
+        """
+        topics = topics or []
         combined = "\n\n".join(
             f"### Notes from part {index} of {len(parts)}\n\n{part}"
             for index, part in enumerate(parts, start=1)
@@ -270,11 +432,23 @@ Depending on the video type:
         # Consolidating with the LLM gives the nicest result, but only when the
         # per-part notes still fit comfortably in one request.
         if len(combined) <= self.merge_chars:
+            merge_focus = (
+                f"""
+These notes were written under a topic filter: the reader asked only about
+{", ".join(topics)}. Keep them filtered - carry over every on-topic point, add
+nothing about other subjects, and do not remark on what the video covered
+elsewhere. Parts of the video with nothing on-topic were already dropped, so do
+not try to fill the gaps or number the parts that remain.
+"""
+                if topics
+                else ""
+            )
+
             prompt = f"""You are an expert editor assembling one set of study notes for a full-length video.
 
 Below are notes written independently for consecutive parts of the SAME video, in order.
 Merge them into ONE coherent document.
-
+{merge_focus}
 Rules:
 - Keep every distinct fact, example, formula and code block. Do NOT drop content to save space.
 - Remove duplicated points, and put related material together.
@@ -287,7 +461,7 @@ Video Title: {title}
 
 Return clean markdown with exactly these sections:
 
-# {title} - Study Notes
+# {focus_heading(title, topics)}
 
 ## Key Points
 The most important takeaways across the entire video. Bold the core concepts.
@@ -304,12 +478,14 @@ The full detailed material from every part, in video order."""
                 logger.warning("segment_merge_failed_using_concatenation", title=title, error=str(e))
 
         logger.info("segment_notes_merged", title=title, parts=len(parts), mode="concatenated")
-        return self._concatenate_segment_notes(parts, title)
+        return self._concatenate_segment_notes(parts, title, topics)
 
     @staticmethod
-    def _concatenate_segment_notes(parts: list[str], title: str) -> str:
+    def _concatenate_segment_notes(
+        parts: list[str], title: str, topics: Optional[list[str]] = None
+    ) -> str:
         """Fallback merge: stitch the parts together without another LLM call."""
-        sections = [f"# {title} - Study Notes", ""]
+        sections = [f"# {focus_heading(title, topics or [])}", ""]
         for index, part in enumerate(parts, start=1):
             sections.append(f"## Part {index} of {len(parts)}")
             sections.append("")

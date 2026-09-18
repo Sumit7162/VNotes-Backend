@@ -47,6 +47,10 @@ class Video(TimestampMixin, Base):
         String(20), default=VideoSource.YOUTUBE, server_default=VideoSource.YOUTUBE, nullable=False
     )
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # The topics the user asked the notes to be limited to, comma-separated, or
+    # null for notes on the whole video. Stored on the record rather than passed
+    # only to the model so a finished note can say what it was narrowed to.
+    focus_topics: Mapped[str | None] = mapped_column(String(500), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(
         String(50), default=VideoStatus.PENDING, nullable=False

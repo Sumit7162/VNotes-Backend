@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class VideoProcessRequest(BaseModel):
     youtube_url: str
+    focus_topics: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Limit the notes to these topics; commas, semicolons or line breaks separate them. Empty means notes on the whole video.",
+    )
 
 
 class TranscriptProcessRequest(BaseModel):
@@ -20,6 +25,11 @@ class TranscriptProcessRequest(BaseModel):
 
     transcript: str = Field(..., description="Raw transcript text, plain or caption-formatted")
     title: Optional[str] = Field(None, max_length=500, description="Title for the generated notes")
+    focus_topics: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Limit the notes to these topics; commas, semicolons or line breaks separate them. Empty means notes on the whole video.",
+    )
 
 
 class VideoRead(BaseModel):
@@ -28,6 +38,9 @@ class VideoRead(BaseModel):
     youtube_url: Optional[str] = None
     source: str = "youtube"
     title: Optional[str] = None
+    # The topics the notes were narrowed to, comma-separated; null for notes on
+    # the whole video.
+    focus_topics: Optional[str] = None
     duration_seconds: Optional[int] = None
     status: str
     error_message: Optional[str] = None

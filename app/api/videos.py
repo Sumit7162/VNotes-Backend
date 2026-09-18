@@ -15,6 +15,7 @@ from app.schemas.video import (
     VideoRead,
 )
 from app.services import transcript_input
+from app.services.groq_ai import parse_focus_topics
 from app.services.usage_limit import UsageLimitExceeded, UsageLimitService
 from app.services.video_processing import VideoProcessingService
 from app.utils.logger import get_logger
@@ -53,7 +54,11 @@ async def process_video(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """Submit a YouTube URL for processing."""
+    """Submit a YouTube URL for processing.
+
+    ``focus_topics`` is optional: name one or more topics and the notes cover
+    only what the video says about them, instead of its whole runtime.
+    """
     user_repo = UserRepository(db)
     user = user_repo.resolve_or_raise(current_user)
 
@@ -78,6 +83,10 @@ async def process_video(
     except UsageLimitExceeded as e:
         raise HTTPException(status_code=429, detail=e.message)
 
+    # Normalised here rather than at generation time so the record shows the
+    # same tidy list the model was given.
+    focus_topics = ", ".join(parse_focus_topics(request.focus_topics)) or None
+
     # Create video record
     video_repo = VideoRepository(db)
     video = video_repo.create(
@@ -85,12 +94,18 @@ async def process_video(
         youtube_url=request.youtube_url,
         title=info.get("title"),
         duration_seconds=duration_seconds,
+        focus_topics=focus_topics,
     )
 
     # Start background processing
     background_tasks.add_task(_process_video_background, video.id, user.id, db.bind.url)
 
-    logger.info("video_processing_started", video_id=str(video.id), user_id=str(user.id))
+    logger.info(
+        "video_processing_started",
+        video_id=str(video.id),
+        user_id=str(user.id),
+        focus_topics=focus_topics,
+    )
     return video
 
 
@@ -124,6 +139,7 @@ async def process_transcript(
     duration_minutes = prepared.estimated_duration_seconds // 60
 
     title = (request.title or "").strip() or "Uploaded Transcript"
+    focus_topics = ", ".join(parse_focus_topics(request.focus_topics)) or None
 
     video_repo = VideoRepository(db)
     video = video_repo.create(
@@ -132,6 +148,7 @@ async def process_transcript(
         title=title[:500],
         duration_seconds=prepared.estimated_duration_seconds,
         source=VideoSource.TRANSCRIPT,
+        focus_topics=focus_topics,
     )
 
     background_tasks.add_task(
@@ -149,6 +166,7 @@ async def process_transcript(
         words=prepared.word_count,
         caption_file=prepared.was_caption_file,
         estimated_minutes=duration_minutes,
+        focus_topics=focus_topics,
     )
     return video
 

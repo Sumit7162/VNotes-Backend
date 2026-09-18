@@ -36,6 +36,7 @@ class VideoRepository:
         title: Optional[str] = None,
         duration_seconds: Optional[int] = None,
         source: str = VideoSource.YOUTUBE,
+        focus_topics: Optional[str] = None,
     ) -> Video:
         video = Video(
             user_id=user_id,
@@ -43,6 +44,7 @@ class VideoRepository:
             title=title,
             duration_seconds=duration_seconds,
             source=source,
+            focus_topics=focus_topics,
         )
         self.db.add(video)
         self.db.commit()
